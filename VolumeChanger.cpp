@@ -1,11 +1,11 @@
 #include "stdafx.h"
-
-#define GetBool(buf) strcmp(buf,"True") ? TRUE : FALSE
+#include <stdio.h>
 
 using namespace::Microsoft::WRL;
 using namespace::Microsoft::WRL::Details;
 
-class ComInitializer {
+class ComInitializer
+{
 private:
 	HRESULT m_hr;
 public:
@@ -15,41 +15,41 @@ public:
 	operator HRESULT() const { return m_hr; }
 };
 
-int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
+int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int)
+{
+	UINT loopDelay;
+
+	int nArgs = 0;
+	LPWSTR* szArglist = CommandLineToArgvW(GetCommandLineW(), &nArgs);
+
+	if (NULL == szArglist || nArgs != 2)
+		loopDelay = 200;
+	else
+		loopDelay = _wtoi(szArglist[1]);
+
 	ComInitializer initializer;
 	if (FAILED(initializer))
 		return -1;
 
-	// デバイス列挙オブジェクトを取得する
+	// Get device enumeration object
 	ComPtr<IMMDeviceEnumerator> deviceEnumerator;
-	HRESULT hr = CoCreateInstance(
-		__uuidof(MMDeviceEnumerator),
-		nullptr,
-		CLSCTX_INPROC_SERVER,
-		IID_PPV_ARGS(&deviceEnumerator));
+	HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&deviceEnumerator));
 	if (FAILED(initializer))
 		RaiseException(hr);
 
-	// 既定のマルチメディア出力デバイス（スピーカー）を取得する
+	// Get the default multimedia output device
 	ComPtr<IMMDevice> device;
-	hr = deviceEnumerator->GetDefaultAudioEndpoint(
-		EDataFlow::eRender,
-		ERole::eMultimedia,
-		&device);
+	hr = deviceEnumerator->GetDefaultAudioEndpoint(EDataFlow::eRender, ERole::eMultimedia, &device);
 	if (FAILED(initializer))
 		RaiseException(hr);
 
-	// オーディオエンドポイントのボリュームオブジェクトを作成する
+	// Create a volume object for the audio endpoint
 	ComPtr<IAudioEndpointVolume> audioEndpointVolume;
-	hr = device->Activate(
-		__uuidof(IAudioEndpointVolume),
-		CLSCTX_INPROC_SERVER,
-		nullptr,
-		&audioEndpointVolume);
+	hr = device->Activate(__uuidof(IAudioEndpointVolume), CLSCTX_INPROC_SERVER, nullptr, &audioEndpointVolume);
 	if (FAILED(hr))
 		RaiseException(hr);
 
-	// ジャックまでの情報を取得する
+	// Get information up to jack
 	ComPtr<IDeviceTopology> pDeviceTopology;
 	ComPtr<IConnector> pConnEP;
 	IConnector* pConnDeviceTo;
@@ -59,56 +59,38 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR, int) {
 	pConnEP->GetConnectedTo(&pConnDeviceTo);
 	pConnDeviceTo->QueryInterface(__uuidof(IPart), (void**)&pPart);
 
-	// 音量調整をする
 	ComPtr<IKsJackDescription> pJackDesc = NULL;
-	UINT nNumJacks = 0;
-	UINT SpeakerCount = 1;
-	float HeadphoneVol = 0.1;
-	float SpeakerVol = 0.2;
-	BOOL SpeakerMute = TRUE;
-	UINT LoopDelay = 200;
-	UINT oldNumJacks = 0;
-	// 設定の読み込み
-	char buf[64];
-	GetPrivateProfileString(TEXT("Default"), TEXT("SpeakerCount"), TEXT("1"), buf, 64, TEXT("./setting.ini"));
-	SpeakerCount = atoi(buf);
-	GetPrivateProfileString(TEXT("Default"), TEXT("SpeakerVol"), TEXT("0.2"), buf, 64, TEXT("./setting.ini"));
-	SpeakerVol = atof(buf);
-	GetPrivateProfileString(TEXT("Default"), TEXT("SpeakerMute"), TEXT("True"), buf, 64, TEXT("./setting.ini"));
-	SpeakerMute = GetBool(buf);
-	GetPrivateProfileString(TEXT("Default"), TEXT("HeadphoneVol"), TEXT("0.1"), buf, 64, TEXT("./setting.ini"));
-	HeadphoneVol = atof(buf);
-	GetPrivateProfileString(TEXT("Default"), TEXT("LoopDelay"), TEXT("200"), buf, 64, TEXT("./setting.ini"));
-	LoopDelay = atoi(buf);
-	// メインループ
-	while (1) {
+	UINT deviceIdNew = 0;
+	UINT deviceIdOld = 0;
+	float headphoneVolume = 0;
+	float speakerVolume = 0;
+
+	// Read current value
+	audioEndpointVolume->GetMasterVolumeLevelScalar(&headphoneVolume);
+
+	// Main loop
+	while (1)
+	{
 		pPart->Activate(CLSCTX_INPROC_SERVER, __uuidof(IKsJackDescription), &pJackDesc);
-		pJackDesc->GetJackCount(&nNumJacks);
-		if (nNumJacks != oldNumJacks) {
-			// 起動時の処理
-			if (oldNumJacks == 0) {
-				if (nNumJacks == SpeakerCount) {
-					hr = audioEndpointVolume->GetMute(&SpeakerMute);
-					hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&SpeakerVol); //スピーカー音量の取得
-				} else {
-					hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&HeadphoneVol); //ヘッドホン音量の取得
-				}
-				MessageBox(NULL, TEXT("起動しました\nデバイスの抜き差しが可能です"), TEXT("VolumeChanger"), MB_OK);
-			} else {
-				if (nNumJacks == SpeakerCount) {
-					hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&HeadphoneVol); //ヘッドホン音量の取得
-					hr = audioEndpointVolume->SetMute(SpeakerMute, nullptr); //ミュート状態を設定
-					hr = audioEndpointVolume->SetMasterVolumeLevelScalar(SpeakerVol, nullptr);
-				} else {
-					hr = audioEndpointVolume->GetMute(&SpeakerMute); //スピーカーでのミュート状態を取得
-					hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&SpeakerVol); //スピーカー音量の取得
-					hr = audioEndpointVolume->SetMute(FALSE, nullptr); //ミュート解除
-					hr = audioEndpointVolume->SetMasterVolumeLevelScalar(HeadphoneVol, nullptr);
-				}
+		pJackDesc->GetJackCount(&deviceIdNew);
+
+		// Output changed
+		if (deviceIdNew != deviceIdOld)
+		{
+			if (deviceIdNew > deviceIdOld)
+			{
+				hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&speakerVolume);
+				hr = audioEndpointVolume->SetMasterVolumeLevelScalar(headphoneVolume, nullptr);
 			}
-			oldNumJacks = nNumJacks;
+			else
+			{
+				hr = audioEndpointVolume->GetMasterVolumeLevelScalar(&headphoneVolume);
+				hr = audioEndpointVolume->SetMasterVolumeLevelScalar(speakerVolume, nullptr);
+			}
+
+			deviceIdOld = deviceIdNew;
 		}
-		Sleep(LoopDelay);
+		Sleep(loopDelay);
 	}
 
 	return 0;
